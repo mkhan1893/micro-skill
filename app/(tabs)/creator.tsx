@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { StyleSheet, View, Text, TextInput, TouchableOpacity, ScrollView, Image, ActivityIndicator } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { StyleSheet, View, Text, TextInput, TouchableOpacity, ScrollView, Image, ActivityIndicator, Platform } from 'react-native';
 import { useTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
 import { useLearning } from '../../context/LearningContext';
@@ -7,7 +7,16 @@ import { GlassCard } from '../../components/GlassCard';
 import { AnimatedGradient } from '../../components/AnimatedGradient';
 import { GeminiService } from '../../services/gemini';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Sparkles, Settings, LogOut, Sun, Moon, Key, HelpCircle, PlusCircle, CheckCircle } from 'lucide-react-native';
+import { Sparkles, Settings, LogOut, Sun, Moon, Key, HelpCircle, PlusCircle, CheckCircle, Terminal } from 'lucide-react-native';
+
+const COMPILER_LOG_STEPS = [
+  "[SYNAPSE CONNECTED] Establishing secure Gemini Intelligence handshake...",
+  "[COGNITIVE MAPPING] Injecting profile interests and skill level preferences...",
+  "[SYNTHESIZING CONTENT] Constructing highly-addictive swipe body & markdown...",
+  "[COMPILING CHALLENGE] Generating high-distractor cognitive quiz blocks...",
+  "[COMPILING FLASHCARDS] Structuring revision flashcard summary items...",
+  "[SERVER PROTOCOL] Injecting Firestore backup nodes..."
+];
 
 export default function CreatorStudio() {
   const { colors, theme, toggleTheme } = useTheme();
@@ -19,6 +28,17 @@ export default function CreatorStudio() {
   const [isCompiling, setIsCompiling] = useState(false);
   const [compileSuccess, setCompileSuccess] = useState(false);
   const [saveStatusMsg, setSaveStatusMsg] = useState('');
+  const [terminalLogs, setTerminalLogs] = useState<string[]>([]);
+  const [showCursor, setShowCursor] = useState(true);
+
+  // Blinking terminal cursor interval
+  useEffect(() => {
+    if (!isCompiling) return;
+    const interval = setInterval(() => {
+      setShowCursor(prev => !prev);
+    }, 450);
+    return () => clearInterval(interval);
+  }, [isCompiling]);
 
   const activeUser = user || {
     displayName: 'Aria Sterling',
@@ -42,33 +62,80 @@ export default function CreatorStudio() {
     if (!topicInput.trim()) return;
     setIsCompiling(true);
     setCompileSuccess(false);
+    setTerminalLogs([]);
+
+    const apiPromise = GeminiService.generateLesson(topicInput, user);
 
     try {
-      // Dynamic lesson compile using Gemini
-      const lessonResult = await GeminiService.generateLesson(topicInput);
-      
+      let apiResult: any = null;
+      let apiError: any = null;
+      let logIndex = 0;
+
+      // Start API request in background
+      apiPromise
+        .then(res => { apiResult = res; })
+        .catch(err => { apiError = err; });
+
+      // Run sequential log visualizer in parallel
+      const result: any = await new Promise((resolve, reject) => {
+        const logInterval = setInterval(() => {
+          if (logIndex < COMPILER_LOG_STEPS.length) {
+            setTerminalLogs(prev => [...prev, COMPILER_LOG_STEPS[logIndex]]);
+            logIndex++;
+          } else {
+            if (apiResult || apiError) {
+              clearInterval(logInterval);
+              if (apiError) reject(apiError);
+              else resolve(apiResult);
+            } else {
+              setTerminalLogs(prev => {
+                if (prev[prev.length - 1] !== "[SYSTEM] Finalizing cognitive schema validation...") {
+                  return [...prev, "[SYSTEM] Finalizing cognitive schema validation..."];
+                }
+                return prev;
+              });
+            }
+          }
+        }, 600);
+
+        const checkCompletion = setInterval(() => {
+          if (logIndex >= COMPILER_LOG_STEPS.length && (apiResult || apiError)) {
+            clearInterval(logInterval);
+            clearInterval(checkCompletion);
+            if (apiError) reject(apiError);
+            else resolve(apiResult);
+          }
+        }, 100);
+      });
+
       const newLesson = {
         id: 'user_lesson_' + Math.random().toString(36).substring(2, 9),
-        title: lessonResult.title,
-        category: 'AI Generated Spec',
-        description: lessonResult.description,
-        duration: lessonResult.duration || '1m',
+        title: result.title,
+        category: user?.interests?.[0] || 'Custom Compile',
+        description: result.description,
+        duration: result.duration || '1m',
         creatorName: activeUser.displayName,
         creatorAvatar: activeUser.avatar,
         imageBg: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=512&auto=format&fit=crop',
-        contentMarkdown: lessonResult.contentMarkdown,
-        quiz: lessonResult.quiz,
+        contentMarkdown: result.contentMarkdown,
+        difficulty: result.difficulty || 'Intermediate',
+        tags: result.tags || [topicInput, 'AI'],
+        xpReward: result.xpReward || 100,
+        summary: result.summary || '',
+        flashcard: result.flashcard || { front: '', back: '' },
+        quiz: result.quiz,
         likes: 0,
         commentsCount: 0
       };
 
-      // Append compiled lesson to memory
-      addCustomLesson(newLesson);
+      // Append compiled lesson to central provider state
+      await addCustomLesson(newLesson);
       
       setCompileSuccess(true);
       setTopicInput('');
     } catch (err) {
-      alert("Lesson compilation encountered an error. Check credentials.");
+      console.error(err);
+      alert("Lesson compilation encountered an error. Check network and custom credentials.");
     } finally {
       setIsCompiling(false);
     }
@@ -111,23 +178,41 @@ export default function CreatorStudio() {
                 placeholder="e.g. DeFi Lending Loops, Rust Pointer safety, Storytelling loops..."
                 placeholderTextColor={colors.textMuted}
                 style={[styles.topicInput, { color: colors.text }]}
+                editable={!isCompiling}
               />
 
-              <TouchableOpacity
-                onPress={handleCompileLesson}
-                disabled={isCompiling}
-                style={[styles.compileBtn, { backgroundColor: colors.primary }]}
-                activeOpacity={0.8}
-              >
-                {isCompiling ? (
-                  <ActivityIndicator size="small" color="#03001e" />
-                ) : (
-                  <>
-                    <Sparkles size={16} color="#03001e" style={{ marginRight: 8 }} />
-                    <Text style={styles.compileText}>Compile Micro Lesson</Text>
-                  </>
-                )}
-              </TouchableOpacity>
+              {!isCompiling && (
+                <TouchableOpacity
+                  onPress={handleCompileLesson}
+                  style={[styles.compileBtn, { backgroundColor: colors.primary }]}
+                  activeOpacity={0.8}
+                >
+                  <Sparkles size={16} color="#03001e" style={{ marginRight: 8 }} />
+                  <Text style={styles.compileText}>Compile Micro Lesson</Text>
+                </TouchableOpacity>
+              )}
+
+              {/* IMMERSIVE AI COMPILER TERMINAL LOGS CONSOLE */}
+              {isCompiling && (
+                <View style={styles.terminalContainer}>
+                  <View style={styles.terminalHeader}>
+                    <Terminal size={14} color={colors.primary} style={{ marginRight: 6 }} />
+                    <Text style={[styles.terminalTitle, { color: colors.primary }]}>AI COGNITIVE COMPILER TERMINAL</Text>
+                  </View>
+                  <ScrollView style={styles.terminalBody} contentContainerStyle={{ paddingBottom: 10 }}>
+                    {terminalLogs.map((log, index) => (
+                      <Text key={index} style={[styles.terminalLogText, { color: colors.text }]}>
+                        {log}
+                      </Text>
+                    ))}
+                    <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+                      <Text style={[styles.terminalLogTextPrompt, { color: colors.primary }]}>ai-compiler@engine:~$ </Text>
+                      <ActivityIndicator size="small" color={colors.primary} style={{ marginLeft: 4, marginRight: 8 }} />
+                      {showCursor && <Text style={{ color: colors.primary, fontWeight: '900', fontSize: 13 }}>█</Text>}
+                    </View>
+                  </ScrollView>
+                </View>
+              )}
 
               {compileSuccess && (
                 <View style={styles.successRow}>
@@ -306,6 +391,43 @@ const styles = StyleSheet.create({
     color: '#03001e',
     fontWeight: '800',
     fontSize: 14,
+  },
+  terminalContainer: {
+    marginTop: 12,
+    backgroundColor: 'rgba(0,0,0,0.85)',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 242, 254, 0.2)',
+    padding: 14,
+    height: 200,
+  },
+  terminalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(0, 242, 254, 0.1)',
+    paddingBottom: 8,
+    marginBottom: 8,
+  },
+  terminalTitle: {
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 1,
+  },
+  terminalBody: {
+    flex: 1,
+  },
+  terminalLogText: {
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    fontSize: 11,
+    lineHeight: 16,
+    color: '#ffffff',
+    marginBottom: 4,
+  },
+  terminalLogTextPrompt: {
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    fontSize: 11,
+    fontWeight: '800',
   },
   successRow: {
     flexDirection: 'row',

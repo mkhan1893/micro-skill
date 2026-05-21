@@ -1,9 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { StyleSheet, View, Text, ScrollView, Dimensions, TouchableOpacity, Image, Share, Platform, NativeSyntheticEvent, NativeScrollEvent } from 'react-native';
 import { useTheme } from '../../context/ThemeContext';
-import { useLearning, MicroLesson } from '../../context/LearningContext';
+import { useLearning } from '../../context/LearningContext';
+import { MicroLesson } from '../../services/types';
 import { GlassCard } from '../../components/GlassCard';
-import { Heart, Bookmark, Share2, Volume2, Sparkles, MessageSquare, Check, X, ChevronRight, HelpCircle } from 'lucide-react-native';
+import { Heart, Bookmark, Share2, Volume2, Sparkles, MessageSquare, Check, X, ChevronRight, HelpCircle, BookOpen } from 'lucide-react-native';
 
 export default function Feed() {
   const { colors } = useTheme();
@@ -12,9 +13,9 @@ export default function Feed() {
   const [activeIdx, setActiveIdx] = useState(0);
   const [selectedAnswers, setSelectedAnswers] = useState<{ [lessonId: string]: number }>({});
   const [showExplanation, setShowExplanation] = useState<{ [lessonId: string]: boolean }>({});
-  const [isMuted, setIsMuted] = useState(false);
-  const [expandedComments, setExpandedComments] = useState<string | null>(null);
-
+  const [showFlashcard, setShowFlashcard] = useState<{ [lessonId: string]: boolean }>({});
+  const [isFlipped, setIsFlipped] = useState<{ [lessonId: string]: boolean }>({});
+  
   // Likes tracker
   const [likesState, setLikesState] = useState<{ [id: string]: { count: number; active: boolean } }>({
     lesson_1: { count: 1243, active: false },
@@ -45,6 +46,16 @@ export default function Feed() {
     if (optionIdx === lesson.quiz.answerIndex) {
       await completeLesson(lesson.id);
     }
+  };
+
+  const handleToggleFlashcard = (id: string) => {
+    setShowFlashcard(prev => ({ ...prev, [id]: !prev[id] }));
+    // Reset flip status when toggling
+    setIsFlipped(prev => ({ ...prev, [id]: false }));
+  };
+
+  const handleFlipCard = (id: string) => {
+    setIsFlipped(prev => ({ ...prev, [id]: !prev[id] }));
   };
 
   const handleShare = async (lesson: MicroLesson) => {
@@ -110,6 +121,8 @@ export default function Feed() {
           const userAns = selectedAnswers[lesson.id];
           const isSaved = savedLessonIds.includes(lesson.id);
           const currentLike = likesState[lesson.id] || { count: lesson.likes, active: false };
+          const activeFlash = showFlashcard[lesson.id] || false;
+          const activeFlip = isFlipped[lesson.id] || false;
 
           return (
             <View key={lesson.id} style={styles.cardContainer}>
@@ -127,6 +140,11 @@ export default function Feed() {
                     <Text style={[styles.badgeText, { color: colors.primary }]}>{lesson.category}</Text>
                   </View>
                   <Text style={[styles.durationText, { color: colors.textMuted }]}>{lesson.duration}</Text>
+                  {lesson.difficulty && (
+                    <View style={[styles.badge, { marginLeft: 8, backgroundColor: 'rgba(127, 0, 255, 0.15)', borderColor: colors.accent }]}>
+                      <Text style={[styles.badgeText, { color: colors.accent }]}>{lesson.difficulty.toUpperCase()}</Text>
+                    </View>
+                  )}
                 </View>
 
                 {/* Creator Header */}
@@ -141,70 +159,113 @@ export default function Feed() {
                 {/* Title */}
                 <Text style={[styles.lessonTitle, { color: colors.text }]}>{lesson.title}</Text>
 
-                {/* Core Scrollable Content inside translucent Glass Panel */}
-                <GlassCard style={styles.contentCard} intensity={25}>
-                  <ScrollView style={styles.contentScroll} showsVerticalScrollIndicator={false}>
-                    <Text style={[styles.contentBody, { color: colors.text }]}>
-                      {lesson.contentMarkdown.replace(/###/g, '').trim()}
-                    </Text>
-                  </ScrollView>
-                </GlassCard>
+                {/* Switch between Feed/Quiz and Flashcard Mode */}
+                {!activeFlash ? (
+                  <>
+                    {/* Core Scrollable Content inside translucent Glass Panel */}
+                    <GlassCard style={styles.contentCard} intensity={25}>
+                      <ScrollView style={styles.contentScroll} showsVerticalScrollIndicator={false}>
+                        <Text style={[styles.contentBody, { color: colors.text }]}>
+                          {lesson.contentMarkdown.replace(/###/g, '').trim()}
+                        </Text>
+                      </ScrollView>
+                    </GlassCard>
 
-                {/* Interactive Inline Quiz Module */}
-                <View style={styles.quizWrapper}>
-                  <View style={styles.quizHeaderRow}>
-                    <HelpCircle size={16} color={colors.primary} style={{ marginRight: 6 }} />
-                    <Text style={[styles.quizLabel, { color: colors.primary }]}>CHALLENGE PRACTICE</Text>
-                  </View>
-                  <Text style={[styles.quizQuestion, { color: colors.text }]}>{lesson.quiz.question}</Text>
+                    {/* Interactive Inline Quiz Module */}
+                    <View style={styles.quizWrapper}>
+                      <View style={styles.quizHeaderRow}>
+                        <HelpCircle size={16} color={colors.primary} style={{ marginRight: 6 }} />
+                        <Text style={[styles.quizLabel, { color: colors.primary }]}>CHALLENGE PRACTICE</Text>
+                      </View>
+                      <Text style={[styles.quizQuestion, { color: colors.text }]}>{lesson.quiz.question}</Text>
 
-                  <View style={styles.optionsCol}>
-                    {lesson.quiz.options.map((opt, optIdx) => {
-                      const isCorrectOpt = optIdx === lesson.quiz.answerIndex;
-                      const isSelectedOpt = optIdx === userAns;
-                      
-                      let cardBorder = 'rgba(255,255,255,0.08)';
-                      let cardBg = 'rgba(255,255,255,0.02)';
-                      let iconColor = colors.textMuted;
+                      <View style={styles.optionsCol}>
+                        {lesson.quiz.options.map((opt, optIdx) => {
+                          const isCorrectOpt = optIdx === lesson.quiz.answerIndex;
+                          const isSelectedOpt = optIdx === userAns;
+                          
+                          let cardBorder = 'rgba(255,255,255,0.08)';
+                          let cardBg = 'rgba(255,255,255,0.02)';
+                          let iconColor = colors.textMuted;
 
-                      if (isSelected) {
-                        if (isCorrectOpt) {
-                          cardBorder = colors.success;
-                          cardBg = 'rgba(16, 185, 129, 0.08)';
-                          iconColor = colors.success;
-                        } else if (isSelectedOpt) {
-                          cardBorder = colors.error;
-                          cardBg = 'rgba(239, 68, 68, 0.08)';
-                          iconColor = colors.error;
+                          if (isSelected) {
+                            if (isCorrectOpt) {
+                              cardBorder = colors.success;
+                              cardBg = 'rgba(16, 185, 129, 0.08)';
+                              iconColor = colors.success;
+                            } else if (isSelectedOpt) {
+                              cardBorder = colors.error;
+                              cardBg = 'rgba(239, 68, 68, 0.08)';
+                              iconColor = colors.error;
+                            }
+                          }
+
+                          return (
+                            <TouchableOpacity
+                              key={optIdx}
+                              onPress={() => handleSelectAnswer(lesson, optIdx)}
+                              activeOpacity={0.8}
+                              disabled={isSelected}
+                              style={[styles.optBtn, { borderColor: cardBorder, backgroundColor: cardBg }]}
+                            >
+                              <Text style={[styles.optText, { color: colors.text }]}>{opt}</Text>
+                              {isSelected && isCorrectOpt && <Check size={16} color={colors.success} />}
+                              {isSelected && isSelectedOpt && !isCorrectOpt && <X size={16} color={colors.error} />}
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+
+                      {/* Feedback Explanation */}
+                      {showExplanation[lesson.id] && (
+                        <GlassCard style={styles.explanationBox} intensity={15} borderColor="rgba(255,255,255,0.03)">
+                          <Text style={[styles.explanationText, { color: colors.text }]}>
+                            <Text style={{ color: colors.primary, fontWeight: '700' }}>Insight: </Text>
+                            {lesson.quiz.explanation}
+                          </Text>
+                        </GlassCard>
+                      )}
+                    </View>
+                  </>
+                ) : (
+                  /* Stunning Double-sided Glassmorphic Flashcard Card */
+                  <TouchableOpacity
+                    onPress={() => handleFlipCard(lesson.id)}
+                    activeOpacity={0.9}
+                    style={styles.flashcardContainer}
+                  >
+                    <GlassCard
+                      style={[
+                        styles.flashcardInner,
+                        {
+                          borderColor: activeFlip ? colors.accent : colors.primary,
+                          backgroundColor: activeFlip ? 'rgba(127, 0, 255, 0.12)' : 'rgba(0, 242, 254, 0.12)'
                         }
-                      }
-
-                      return (
-                        <TouchableOpacity
-                          key={optIdx}
-                          onPress={() => handleSelectAnswer(lesson, optIdx)}
-                          activeOpacity={0.8}
-                          disabled={isSelected}
-                          style={[styles.optBtn, { borderColor: cardBorder, backgroundColor: cardBg }]}
-                        >
-                          <Text style={[styles.optText, { color: colors.text }]}>{opt}</Text>
-                          {isSelected && isCorrectOpt && <Check size={16} color={colors.success} />}
-                          {isSelected && isSelectedOpt && !isCorrectOpt && <X size={16} color={colors.error} />}
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-
-                  {/* Feedback Explanation */}
-                  {showExplanation[lesson.id] && (
-                    <GlassCard style={styles.explanationBox} intensity={15} borderColor="rgba(255,255,255,0.03)">
-                      <Text style={[styles.explanationText, { color: colors.text }]}>
-                        <Text style={{ color: colors.primary, fontWeight: '700' }}>Insight: </Text>
-                        {lesson.quiz.explanation}
+                      ]}
+                      intensity={35}
+                      glow
+                    >
+                      <View style={styles.flashcardHeader}>
+                        <Sparkles size={16} color={activeFlip ? colors.accent : colors.primary} />
+                        <Text style={[styles.flashcardModeLabel, { color: activeFlip ? colors.accent : colors.primary }]}>
+                          {activeFlip ? 'REVISION KEY (BACK)' : 'CONCEPT TRIGGER (FRONT)'}
+                        </Text>
+                      </View>
+                      
+                      <View style={styles.flashcardBody}>
+                        <Text style={[styles.flashcardText, { color: colors.text }]}>
+                          {activeFlip 
+                            ? (lesson.flashcard?.back || lesson.quiz.explanation) 
+                            : (lesson.flashcard?.front || lesson.title)}
+                        </Text>
+                      </View>
+                      
+                      <Text style={[styles.flashcardFooter, { color: colors.textMuted }]}>
+                        Tap card to flip
                       </Text>
                     </GlassCard>
-                  )}
-                </View>
+                  </TouchableOpacity>
+                )}
               </View>
 
               {/* Vertical Side Interaction Menu (TikTok Style Overlay) */}
@@ -214,6 +275,14 @@ export default function Feed() {
                     <Heart size={22} color={currentLike.active ? colors.accent : '#fff'} fill={currentLike.active ? colors.accent : 'none'} />
                   </View>
                   <Text style={styles.actionLabel}>{currentLike.count}</Text>
+                </TouchableOpacity>
+
+                {/* Flip Flashcard toggle button */}
+                <TouchableOpacity onPress={() => handleToggleFlashcard(lesson.id)} style={styles.actionBtn}>
+                  <View style={[styles.actionIconCircle, activeFlash && { backgroundColor: 'rgba(0, 242, 254, 0.15)' }]}>
+                    <BookOpen size={22} color={activeFlash ? colors.primary : '#fff'} />
+                  </View>
+                  <Text style={styles.actionLabel}>{activeFlash ? 'Feed' : 'Revision'}</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity onPress={() => toggleSaveLesson(lesson.id)} style={styles.actionBtn}>
@@ -283,7 +352,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     borderRadius: 20,
     borderWidth: 1,
-    marginRight: 10,
   },
   badgeText: {
     fontSize: 11,
@@ -293,6 +361,7 @@ const styles = StyleSheet.create({
   durationText: {
     fontSize: 12,
     fontWeight: '600',
+    marginLeft: 10,
   },
   creatorRow: {
     flexDirection: 'row',
@@ -379,6 +448,47 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 16,
     fontWeight: '500',
+  },
+  flashcardContainer: {
+    height: 360,
+    width: '100%',
+    marginVertical: 12,
+  },
+  flashcardInner: {
+    flex: 1,
+    padding: 24,
+    borderRadius: 24,
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderWidth: 2,
+  },
+  flashcardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  flashcardModeLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1.2,
+  },
+  flashcardBody: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 12,
+  },
+  flashcardText: {
+    fontSize: 18,
+    lineHeight: 26,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  flashcardFooter: {
+    fontSize: 10,
+    fontWeight: '600',
+    letterSpacing: 0.5,
+    opacity: 0.7,
   },
   sideActionsMenu: {
     position: 'absolute',

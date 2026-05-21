@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { StyleSheet, View, Text, TextInput, ScrollView, TouchableOpacity, ActivityIndicator, KeyboardAvoidingView, Platform, Dimensions } from 'react-native';
 import { useTheme } from '../../context/ThemeContext';
+import { useAuth } from '../../context/AuthContext';
 import { GlassCard } from '../../components/GlassCard';
 import { AnimatedGradient } from '../../components/AnimatedGradient';
 import { GeminiService, ChatMessage } from '../../services/gemini';
@@ -13,16 +14,23 @@ const SUGGESTIONS = [
   'Interactive Coding quiz'
 ];
 
+interface ExtendedChatMessage extends ChatMessage {
+  isStreaming?: boolean;
+  typedContent?: string;
+}
+
 export default function AITutor() {
   const { colors } = useTheme();
+  const { user } = useAuth();
   
-  const [messages, setMessages] = useState<ChatMessage[]>([
+  const [messages, setMessages] = useState<ExtendedChatMessage[]>([
     { role: 'model', content: "### Greetings, Pioneer! 🚀\n\nI am your **MICRO SKILL AI Copilot**. I can condense complex topics into immediate 30-second tutorials.\n\nChoose an inquiry chip below or ask any concept to begin." }
   ]);
   const [inputText, setInputText] = useState('');
   const [loading, setLoading] = useState(false);
   const [voiceActive, setVoiceActive] = useState(false);
   const [waveHeight, setWaveHeight] = useState(new Array(8).fill(10));
+  const [showCursor, setShowCursor] = useState(true);
 
   const scrollRef = useRef<ScrollView>(null);
 
@@ -39,22 +47,75 @@ export default function AITutor() {
     return () => clearInterval(interval);
   }, [voiceActive]);
 
+  // Blinking virtual cursor interval for streaming completions
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setShowCursor(prev => !prev);
+    }, 500);
+    return () => clearInterval(interval);
+  }, []);
+
   const handleSend = async (text: string) => {
     if (!text.trim() || loading) return;
 
-    const userMsg: ChatMessage = { role: 'user', content: text };
+    const userMsg: ExtendedChatMessage = { role: 'user', content: text };
     setMessages(prev => [...prev, userMsg]);
     setInputText('');
     setLoading(true);
 
     try {
-      const response = await GeminiService.sendTutorMessage(messages, text);
-      setMessages(prev => [...prev, { role: 'model', content: response }]);
+      // Pass the user's progress profile to support RPG Personalized responses!
+      const historyForAPI: ChatMessage[] = messages.map(m => ({
+        role: m.role,
+        content: m.content
+      }));
+      const response = await GeminiService.sendTutorMessage(historyForAPI, text, user);
+      
+      // Perform the word-by-word streaming visualization queue
+      streamText(response);
     } catch (err) {
       setMessages(prev => [...prev, { role: 'model', content: "Failed to query the intelligence matrix. Please verify connections." }]);
-    } finally {
       setLoading(false);
     }
+  };
+
+  const streamText = (fullText: string) => {
+    const words = fullText.split(' ');
+    let currentWordIndex = 0;
+    
+    // Add streaming message card
+    setMessages(prev => [
+      ...prev,
+      { role: 'model', content: fullText, isStreaming: true, typedContent: '' }
+    ]);
+
+    const intervalId = setInterval(() => {
+      if (currentWordIndex >= words.length) {
+        clearInterval(intervalId);
+        setMessages(prev => {
+          const updated = [...prev];
+          const lastMsg = updated[updated.length - 1];
+          if (lastMsg && lastMsg.role === 'model') {
+            lastMsg.isStreaming = false;
+            lastMsg.typedContent = fullText;
+          }
+          return updated;
+        });
+        setLoading(false);
+        return;
+      }
+
+      setMessages(prev => {
+        const updated = [...prev];
+        const lastMsg = updated[updated.length - 1];
+        if (lastMsg && lastMsg.role === 'model') {
+          const nextWords = words.slice(0, currentWordIndex + 1).join(' ');
+          lastMsg.typedContent = nextWords;
+        }
+        return updated;
+      });
+      currentWordIndex++;
+    }, 30); // 30ms interval for natural typing cadence
   };
 
   const toggleVoice = () => {
@@ -99,6 +160,7 @@ export default function AITutor() {
         >
           {messages.map((msg, i) => {
             const isUser = msg.role === 'user';
+            const displayContent = msg.isStreaming ? (msg.typedContent || '') : msg.content;
             return (
               <View
                 key={i}
@@ -118,7 +180,10 @@ export default function AITutor() {
                   ]}
                 >
                   <Text style={[styles.msgText, { color: colors.text }]}>
-                    {msg.content.replace(/###/g, '').trim()}
+                    {displayContent.replace(/###/g, '').trim()}
+                    {msg.isStreaming && showCursor && (
+                      <Text style={{ color: colors.primary, fontWeight: 'bold' }}> |</Text>
+                    )}
                   </Text>
                 </GlassCard>
               </View>
@@ -126,7 +191,7 @@ export default function AITutor() {
           })}
 
           {/* Glowing Animated Loading Typing Indicator */}
-          {loading && (
+          {loading && messages[messages.length - 1]?.role === 'user' && (
             <View style={[styles.msgRow, styles.msgRowModel]}>
               <GlassCard style={styles.msgBubbleLoading} intensity={15}>
                 <ActivityIndicator size="small" color={colors.primary} />
@@ -193,10 +258,10 @@ export default function AITutor() {
 
             <TouchableOpacity
               onPress={() => handleSend(inputText)}
-              disabled={!inputText.trim()}
-              style={[styles.sendBtn, { backgroundColor: inputText.trim() ? colors.primary : 'rgba(255,255,255,0.03)' }]}
+              disabled={!inputText.trim() || loading}
+              style={[styles.sendBtn, { backgroundColor: inputText.trim() && !loading ? colors.primary : 'rgba(255,255,255,0.03)' }]}
             >
-              <Send size={16} color={inputText.trim() ? '#03001e' : colors.textMuted} />
+              <Send size={16} color={inputText.trim() && !loading ? '#03001e' : colors.textMuted} />
             </TouchableOpacity>
           </GlassCard>
         </View>

@@ -1,51 +1,24 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from './AuthContext';
-
-export interface MicroLesson {
-  id: string;
-  title: string;
-  category: string;
-  description: string;
-  duration: string; // "3m", "30s"
-  creatorName: string;
-  creatorAvatar: string;
-  videoUrl?: string;
-  imageBg: string;
-  contentMarkdown: string;
-  quiz: {
-    question: string;
-    options: string[];
-    answerIndex: number;
-    explanation: string;
-  };
-  likes: number;
-  commentsCount: number;
-}
-
-export interface SkillPath {
-  id: string;
-  title: string;
-  description: string;
-  lessonsCount: number;
-  xpReward: number;
-  progress: number; // 0 to 100
-  unlocked: boolean;
-  color: string;
-}
+import { FirestoreDB, isMockFirebase } from '../services/firebase';
+import { MicroLesson, SkillPath, UserProgress } from '../services/types';
 
 interface LearningContextType {
   lessons: MicroLesson[];
   paths: SkillPath[];
   savedLessonIds: string[];
   downloadedLessonIds: string[];
+  completedLessonIds: string[];
+  weeklyActivity: Record<string, number>;
   toggleSaveLesson: (id: string) => Promise<void>;
   toggleDownloadLesson: (id: string) => Promise<void>;
   completeLesson: (id: string) => Promise<void>;
-  addCustomLesson: (lesson: MicroLesson) => void;
+  addCustomLesson: (lesson: MicroLesson) => Promise<void>;
   activePath: string | null;
   setActivePath: (pathId: string | null) => void;
   updatePathProgress: (pathId: string, progress: number) => void;
+  loading: boolean;
 }
 
 const LearningContext = createContext<LearningContextType | undefined>(undefined);
@@ -62,15 +35,15 @@ const SEEDED_LESSONS: MicroLesson[] = [
     creatorAvatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?q=80&w=128&auto=format&fit=crop',
     imageBg: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=512&auto=format&fit=crop',
     contentMarkdown: `### The Perfect Prompt Blueprint
-
+    
 To get world-class outputs from LLMs, use the **R-C-O Formula**:
-1. **R (Role)**: Tell the AI who it is. (e.g. *\"You are a principal software architect...\"*)
-2. **C (Context)**: Provide the details of what you need. (e.g. *\"We are building a glassmorphic dashboard in React Native...\"*)
-3. **O (Output Format)**: Direct the format precisely. (e.g. *\"Output only standard TSX code with zero explanations.\"*)
+1. **R (Role)**: Tell the AI who it is. (e.g. *"You are a principal software architect..."*)
+2. **C (Context)**: Provide the details of what you need. (e.g. *"We are building a glassmorphic dashboard in React Native..."*)
+3. **O (Output Format)**: Direct the format precisely. (e.g. *"Output only standard TSX code with zero explanations."*)
 
-Avoid ambiguous terms like \"be creative\" or \"make it quick\". Give precise parameters!`,
+Avoid ambiguous terms like "be creative" or "make it quick". Give precise parameters!`,
     quiz: {
-      question: 'What does the \"R\" in the R-C-O Prompt formula represent?',
+      question: 'What does the "R" in the R-C-O Prompt formula represent?',
       options: ['Recurrent', 'Role', 'Reaction', 'Research'],
       answerIndex: 1,
       explanation: 'Role (R) dictates the persona, styling, and baseline context the LLM should adopt.'
@@ -147,31 +120,126 @@ const SEEDED_PATHS: SkillPath[] = [
 ];
 
 export const LearningProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { updateUserXp } = useAuth();
-  const [lessons, setLessons] = useState<MicroLesson[]>(SEEDED_LESSONS);
-  const [paths, setPaths] = useState<SkillPath[]>(SEEDED_PATHS);
+  const { user, updateUserXp } = useAuth();
+  const [lessons, setLessons] = useState<MicroLesson[]>([]);
+  const [paths, setPaths] = useState<SkillPath[]>([]);
   const [savedLessonIds, setSavedLessonIds] = useState<string[]>([]);
   const [downloadedLessonIds, setDownloadedLessonIds] = useState<string[]>([]);
+  const [completedLessonIds, setCompletedLessonIds] = useState<string[]>([]);
+  const [weeklyActivity, setWeeklyActivity] = useState<Record<string, number>>({});
   const [activePath, setActivePathState] = useState<string | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
 
+  // 1. Load initial collection seeds
   useEffect(() => {
-    const loadState = async () => {
+    const initializeLessonsAndPaths = async () => {
+      setLoading(true);
       try {
-        const [saved, downloaded, active] = await Promise.all([
-          AsyncStorage.getItem('saved_lessons'),
-          AsyncStorage.getItem('downloaded_lessons'),
-          AsyncStorage.getItem('active_path_id'),
-        ]);
+        if (isMockFirebase) {
+          setLessons(SEEDED_LESSONS);
+          setPaths(SEEDED_PATHS);
 
-        if (saved) setSavedLessonIds(JSON.parse(saved));
-        if (downloaded) setDownloadedLessonIds(JSON.parse(downloaded));
-        if (active) setActivePathState(active);
+          const [saved, downloaded, active, completed] = await Promise.all([
+            AsyncStorage.getItem('saved_lessons'),
+            AsyncStorage.getItem('downloaded_lessons'),
+            AsyncStorage.getItem('active_path_id'),
+            AsyncStorage.getItem('completed_lessons')
+          ]);
+
+          if (saved) setSavedLessonIds(JSON.parse(saved));
+          if (downloaded) setDownloadedLessonIds(JSON.parse(downloaded));
+          if (active) setActivePathState(active);
+          if (completed) setCompletedLessonIds(JSON.parse(completed));
+        } else {
+          // Real Firebase integration loading
+          let remoteLessons = await FirestoreDB.getCollection<MicroLesson>('lessons');
+          if (remoteLessons.length === 0) {
+            console.log('[Learning] Auto-seeding Firestore lessons collection...');
+            await Promise.all(
+              SEEDED_LESSONS.map(l => FirestoreDB.setDocument('lessons', l.id, l))
+            );
+            remoteLessons = SEEDED_LESSONS;
+          }
+          setLessons(remoteLessons);
+
+          let remotePaths = await FirestoreDB.getCollection<SkillPath>('paths');
+          if (remotePaths.length === 0) {
+            console.log('[Learning] Auto-seeding Firestore paths collection...');
+            await Promise.all(
+              SEEDED_PATHS.map(p => FirestoreDB.setDocument('paths', p.id, p))
+            );
+            remotePaths = SEEDED_PATHS;
+          }
+          setPaths(remotePaths);
+        }
       } catch (err) {
-        console.error('Failed to load learning assets state:', err);
+        console.error('[Learning] Collection seed failed:', err);
+      } finally {
+        setLoading(false);
       }
     };
-    loadState();
-  }, []);
+    initializeLessonsAndPaths();
+  }, [isMockFirebase]);
+
+  // 2. Hydrate user-specific states when user changes
+  useEffect(() => {
+    const hydrateUserProgress = async () => {
+      if (!user) {
+        setSavedLessonIds([]);
+        setDownloadedLessonIds([]);
+        setCompletedLessonIds([]);
+        setWeeklyActivity({});
+        setActivePathState(null);
+        return;
+      }
+
+      try {
+        if (isMockFirebase) {
+          const [saved, downloaded, completed, weekly] = await Promise.all([
+            AsyncStorage.getItem(`saved_lessons_${user.uid}`),
+            AsyncStorage.getItem(`downloaded_lessons_${user.uid}`),
+            AsyncStorage.getItem(`completed_lessons_${user.uid}`),
+            AsyncStorage.getItem(`weekly_activity_${user.uid}`)
+          ]);
+
+          if (saved) setSavedLessonIds(JSON.parse(saved));
+          if (downloaded) setDownloadedLessonIds(JSON.parse(downloaded));
+          if (completed) setCompletedLessonIds(JSON.parse(completed));
+          if (weekly) setWeeklyActivity(JSON.parse(weekly));
+        } else {
+          const progressDoc = await FirestoreDB.getDocument<UserProgress>('progress', user.uid);
+          if (progressDoc) {
+            setSavedLessonIds(progressDoc.savedLessonIds || []);
+            setDownloadedLessonIds(progressDoc.downloadedLessonIds || []);
+            setCompletedLessonIds(progressDoc.completedLessonIds || []);
+            setWeeklyActivity(progressDoc.weeklyActivity || {});
+
+            if (progressDoc.pathProgress) {
+              setPaths(prev => prev.map(p => ({
+                ...p,
+                progress: progressDoc.pathProgress[p.id] !== undefined ? progressDoc.pathProgress[p.id] : p.progress
+              })));
+            }
+          } else {
+            const defaultProgress: UserProgress = {
+              userId: user.uid,
+              completedLessonIds: [],
+              pathProgress: {},
+              savedLessonIds: [],
+              downloadedLessonIds: [],
+              streakCount: user.streak,
+              weeklyActivity: {},
+              updatedAt: new Date().toISOString()
+            };
+            await FirestoreDB.setDocument('progress', user.uid, defaultProgress);
+          }
+        }
+      } catch (err) {
+        console.error('[Learning] Failed to hydrate user progress:', err);
+      }
+    };
+    hydrateUserProgress();
+  }, [user, isMockFirebase]);
 
   const toggleSaveLesson = async (id: string) => {
     let nextSaved = [...savedLessonIds];
@@ -181,10 +249,19 @@ export const LearningProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       nextSaved.push(id);
     }
     setSavedLessonIds(nextSaved);
+
     try {
-      await AsyncStorage.setItem('saved_lessons', JSON.stringify(nextSaved));
+      if (isMockFirebase) {
+        if (user) await AsyncStorage.setItem(`saved_lessons_${user.uid}`, JSON.stringify(nextSaved));
+        await AsyncStorage.setItem('saved_lessons', JSON.stringify(nextSaved));
+      } else if (user) {
+        await FirestoreDB.updateDocument('progress', user.uid, {
+          savedLessonIds: nextSaved,
+          updatedAt: new Date().toISOString()
+        });
+      }
     } catch (err) {
-      console.error('AsyncStorage error in toggleSaveLesson:', err);
+      console.error('[Learning] Save bookmark error:', err);
     }
   };
 
@@ -196,37 +273,96 @@ export const LearningProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       nextDown.push(id);
     }
     setDownloadedLessonIds(nextDown);
+
     try {
-      await AsyncStorage.setItem('downloaded_lessons', JSON.stringify(nextDown));
+      if (isMockFirebase) {
+        if (user) await AsyncStorage.setItem(`downloaded_lessons_${user.uid}`, JSON.stringify(nextDown));
+        await AsyncStorage.setItem('downloaded_lessons', JSON.stringify(nextDown));
+      } else if (user) {
+        await FirestoreDB.updateDocument('progress', user.uid, {
+          downloadedLessonIds: nextDown,
+          updatedAt: new Date().toISOString()
+        });
+      }
     } catch (err) {
-      console.error('AsyncStorage error in toggleDownloadLesson:', err);
+      console.error('[Learning] Save downloaded error:', err);
     }
   };
 
-  const addCustomLesson = (newLesson: MicroLesson) => {
+  const addCustomLesson = async (newLesson: MicroLesson) => {
     setLessons(prev => [newLesson, ...prev]);
+    try {
+      if (!isMockFirebase) {
+        await FirestoreDB.setDocument('lessons', newLesson.id, newLesson);
+      }
+    } catch (err) {
+      console.error('[Learning] Add custom lesson error:', err);
+    }
   };
 
   const completeLesson = async (id: string) => {
+    if (completedLessonIds.includes(id)) return;
+
+    const nextCompleted = [...completedLessonIds, id];
+    setCompletedLessonIds(nextCompleted);
+
+    // Dynamic XP multiplier triggers inside AuthContext
     await updateUserXp(100);
-    
+
+    let pathId = '';
+    let newProgress = 0;
     if (id === 'lesson_1') {
-      updatePathProgress('path_ai', 28);
+      pathId = 'path_ai';
+      newProgress = 28;
     } else if (id === 'lesson_2') {
-      updatePathProgress('path_comm', 20);
+      pathId = 'path_comm';
+      newProgress = 20;
+    }
+
+    if (pathId) {
+      updatePathProgress(pathId, newProgress);
+    }
+
+    // Set daily heatmap activity
+    const today = new Date().toISOString().split('T')[0];
+    const nextWeekly = { ...weeklyActivity };
+    nextWeekly[today] = (nextWeekly[today] || 0) + 100;
+    setWeeklyActivity(nextWeekly);
+
+    try {
+      if (isMockFirebase) {
+        if (user) {
+          await Promise.all([
+            AsyncStorage.setItem(`completed_lessons_${user.uid}`, JSON.stringify(nextCompleted)),
+            AsyncStorage.setItem(`weekly_activity_${user.uid}`, JSON.stringify(nextWeekly))
+          ]);
+        }
+        await AsyncStorage.setItem('completed_lessons', JSON.stringify(nextCompleted));
+      } else if (user) {
+        const progressDoc = await FirestoreDB.getDocument<UserProgress>('progress', user.uid);
+        const currentPathProgress = progressDoc?.pathProgress || {};
+        if (pathId) {
+          currentPathProgress[pathId] = newProgress;
+        }
+
+        await FirestoreDB.updateDocument('progress', user.uid, {
+          completedLessonIds: nextCompleted,
+          pathProgress: currentPathProgress,
+          weeklyActivity: nextWeekly,
+          updatedAt: new Date().toISOString()
+        });
+      }
+    } catch (err) {
+      console.error('[Learning] Complete lesson error:', err);
     }
   };
 
   const setActivePath = async (pathId: string | null) => {
     setActivePathState(pathId);
     try {
-      if (pathId) {
-        await AsyncStorage.setItem('active_path_id', pathId);
-      } else {
-        await AsyncStorage.removeItem('active_path_id');
-      }
+      await AsyncStorage.setItem('active_path_id', pathId || '');
     } catch (err) {
-      console.error('AsyncStorage error in setActivePath:', err);
+      console.error('[Learning] Set active path error:', err);
     }
   };
 
@@ -245,13 +381,16 @@ export const LearningProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       paths,
       savedLessonIds,
       downloadedLessonIds,
+      completedLessonIds,
+      weeklyActivity,
       toggleSaveLesson,
       toggleDownloadLesson,
       completeLesson,
       addCustomLesson,
       activePath,
       setActivePath,
-      updatePathProgress
+      updatePathProgress,
+      loading
     }}>
       {children}
     </LearningContext.Provider>

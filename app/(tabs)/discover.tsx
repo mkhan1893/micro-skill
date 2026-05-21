@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
 import { StyleSheet, View, Text, TextInput, ScrollView, TouchableOpacity, Image } from 'react-native';
 import { useTheme } from '../../context/ThemeContext';
-import { useLearning, SkillPath } from '../../context/LearningContext';
+import { useLearning } from '../../context/LearningContext';
+import { SkillPath } from '../../services/types';
 import { GlassCard } from '../../components/GlassCard';
 import { AnimatedGradient } from '../../components/AnimatedGradient';
-import { Search, Mic, TrendingUp, Sparkles, BookOpen, ChevronRight, Trophy } from 'lucide-react-native';
+import { Search, Mic, TrendingUp, Sparkles, BookOpen, ChevronRight, Trophy, Bookmark } from 'lucide-react-native';
 
 const TRENDING_SKILLS = [
   { id: 't_1', title: 'GPT-4 Fine-Tuning basics', count: '4.8k learners', color: '#00f2fe' },
@@ -14,8 +15,10 @@ const TRENDING_SKILLS = [
 
 export default function Discover() {
   const { colors } = useTheme();
-  const { paths, setActivePath, activePath } = useLearning();
+  const { paths, setActivePath, activePath, savedLessonIds, lessons } = useLearning();
   const [searchVal, setSearchVal] = useState('');
+
+  const savedLessons = lessons.filter(l => savedLessonIds.includes(l.id));
 
   const handleSelectPath = (path: SkillPath) => {
     if (activePath === path.id) {
@@ -103,6 +106,40 @@ export default function Discover() {
               );
             })}
           </View>
+        </View>
+
+        {/* Bookmarked/Saved Lessons */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Bookmark size={16} color={colors.primary} style={{ marginRight: 8 }} />
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>BOOKMARKED MICRO SKILLS</Text>
+          </View>
+
+          {savedLessons.length > 0 ? (
+            <View style={styles.trendingList}>
+              {savedLessons.map((lesson) => (
+                <GlassCard key={lesson.id} style={styles.trendItem} intensity={15}>
+                  <View style={styles.trendRow}>
+                    <View style={[styles.numberBox, { borderColor: 'rgba(255,255,255,0.08)' }]}>
+                      <Bookmark size={16} color={colors.primary} fill={colors.primary} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.trendTitle, { color: colors.text }]}>{lesson.title}</Text>
+                      <Text style={[styles.trendCount, { color: colors.textMuted }]}>{lesson.category} • {lesson.duration}</Text>
+                    </View>
+                    <ChevronRight size={16} color={colors.textMuted} />
+                  </View>
+                </GlassCard>
+              ))}
+            </View>
+          ) : (
+            <GlassCard style={styles.emptyCard} intensity={10}>
+              <Bookmark size={20} color={colors.textMuted} style={{ marginBottom: 6, opacity: 0.5 }} />
+              <Text style={[styles.emptyText, { color: colors.textMuted }]}>
+                Your database is empty. Bookmark lessons in the feed to save them here.
+              </Text>
+            </GlassCard>
+          )}
         </View>
 
         {/* Trending Column */}
@@ -290,5 +327,23 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '500',
     marginTop: 2,
+  },
+  emptyCard: {
+    padding: 20,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderStyle: 'dashed',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: 'rgba(255,255,255,0.01)',
+  },
+  emptyText: {
+    fontSize: 12,
+    fontWeight: '600',
+    textAlign: 'center',
+    lineHeight: 16,
+    maxWidth: '80%',
+    marginTop: 4,
   }
 });

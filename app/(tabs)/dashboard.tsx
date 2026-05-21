@@ -1,37 +1,91 @@
-import React from 'react';
-import { StyleSheet, View, Text, ScrollView, Dimensions, TouchableOpacity } from 'react-native';
+import React, { useState } from 'react';
+import { StyleSheet, View, Text, ScrollView, Dimensions, TouchableOpacity, TextInput, Image, ActivityIndicator } from 'react-native';
 import { useTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
+import { useLearning } from '../../context/LearningContext';
 import { GlassCard } from '../../components/GlassCard';
 import { AnimatedGradient } from '../../components/AnimatedGradient';
-import { Flame, Award, Zap, Clock, ShieldCheck, Star, Brain, ArrowUpRight, TrendingUp } from 'lucide-react-native';
+import { ProgressionEngine } from '../../services/progression';
+import { Flame, Award, Zap, Clock, ShieldCheck, Star, Brain, ArrowUpRight, TrendingUp, Settings2, Check } from 'lucide-react-native';
 
-const HEATMAP_DAYS = [
-  [0, 1, 3, 0, 2, 4, 1], // Week 1
-  [1, 0, 2, 5, 0, 3, 2], // Week 2
-  [2, 3, 0, 1, 4, 2, 0], // Week 3
-  [0, 1, 2, 3, 1, 0, 4], // Week 4
-  [3, 4, 1, 2, 5, 2, 3], // Week 5 (Current)
+const DEFAULT_AVATARS = [
+  'https://images.unsplash.com/photo-1534528741775-53994a69daeb?q=80&w=256&auto=format&fit=crop',
+  'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=256&auto=format&fit=crop',
+  'https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?q=80&w=256&auto=format&fit=crop',
+  'https://images.unsplash.com/photo-1494790108377-be9c29b29330?q=80&w=256&auto=format&fit=crop',
 ];
 
-const ACHIEVEMENTS = [
-  { id: 'a_1', title: 'Prompt Architect', desc: 'Craft 5 AI Prompts', icon: Brain, color: '#00f2fe' },
-  { id: 'a_2', title: 'Absolute Vocals', desc: 'Pass public speech quiz', icon: Zap, color: '#7f00ff' },
-  { id: 'a_3', title: 'Perfect Streak', desc: 'Maintain 3 day log', icon: Flame, color: '#ff007f' },
-];
+const BADGE_DETAILS: Record<string, { title: string; desc: string; icon: any; color: string }> = {
+  Pioneer: { title: 'Neural Pioneer', desc: 'Welcome to the Micro Skill network', icon: Brain, color: '#00f2fe' },
+  Scholar: { title: 'Cognitive Scholar', desc: 'Pass 1,500 total XP system threshold', icon: Award, color: '#7f00ff' },
+  Grandmaster: { title: 'Grandmaster Architect', desc: 'Pass 5,000 total XP system threshold', icon: ShieldCheck, color: '#ff007f' },
+  Consistent: { title: 'Consistent Learner', desc: 'Pass 3-day active streak threshold', icon: Flame, color: '#ff7700' },
+  Unstoppable: { title: 'Unstoppable Momentum', desc: 'Pass 7-day active streak threshold', icon: Zap, color: '#10b981' },
+  'First Step': { title: 'First Steps', desc: 'Initialize neural configurations', icon: Star, color: '#f59e0b' }
+};
 
 export default function Dashboard() {
   const { colors } = useTheme();
-  const { user } = useAuth();
+  const { user, updateProfileDetails } = useAuth();
+  const { weeklyActivity, completedLessonIds } = useLearning();
+
+  const [isEditing, setIsEditing] = useState(false);
+  const [editName, setEditName] = useState(user?.displayName || '');
+  const [editBio, setEditBio] = useState(user?.bio || 'Curious learner exploring new frontiers of knowledge.');
+  const [editAvatar, setEditAvatar] = useState(user?.avatar || DEFAULT_AVATARS[0]);
+  const [saving, setSaving] = useState(false);
 
   const activeUser = user || {
-    displayName: 'Aria',
-    xp: 280,
-    streak: 4,
-    coins: 46,
+    displayName: 'Pioneer',
+    email: '',
+    avatar: DEFAULT_AVATARS[0],
+    xp: 0,
+    streak: 1,
+    coins: 10,
     level: 1,
-    isPremium: false
+    isPremium: false,
+    isCreator: false,
+    bio: 'Curious learner exploring new frontiers of knowledge.',
+    badges: ['Pioneer'],
+    achievements: ['First Step']
   };
+
+  const xpStats = ProgressionEngine.getXpProgressForLevel(activeUser.xp);
+  const learningTimeMin = completedLessonIds.length * 2; // Average of 2 minutes per micro-lesson
+
+  // Calculate dynamic 5-week heatmap ended on today
+  const constructHeatmap = () => {
+    const daysGrid: number[][] = [];
+    const today = new Date();
+    
+    // Create 5 columns (weeks)
+    for (let w = 0; w < 5; w++) {
+      const week: number[] = [];
+      // Create 7 rows (days)
+      for (let d = 0; d < 7; d++) {
+        // Calculate offset back from today
+        const offset = (4 - w) * 7 + (6 - d);
+        const targetDate = new Date();
+        targetDate.setDate(today.getDate() - offset);
+        const dateStr = targetDate.toISOString().split('T')[0];
+        
+        const xpEarned = weeklyActivity[dateStr] || 0;
+        let intensity = 0;
+        if (xpEarned > 0) {
+          if (xpEarned < 100) intensity = 1;
+          else if (xpEarned < 200) intensity = 2;
+          else if (xpEarned < 300) intensity = 3;
+          else if (xpEarned < 400) intensity = 4;
+          else intensity = 5;
+        }
+        week.push(intensity);
+      }
+      daysGrid.push(week);
+    }
+    return daysGrid;
+  };
+
+  const dynamicHeatmap = constructHeatmap();
 
   const getHeatmapColor = (intensity: number) => {
     if (intensity === 0) return 'rgba(255,255,255,0.03)';
@@ -39,7 +93,27 @@ export default function Dashboard() {
     if (intensity === 2) return 'rgba(0, 242, 254, 0.35)';
     if (intensity === 3) return 'rgba(127, 0, 255, 0.45)';
     if (intensity === 4) return 'rgba(127, 0, 255, 0.7)';
-    return colors.primary; // Maximum intensity
+    return colors.primary; // Max intensity
+  };
+
+  const handleOpenEdit = () => {
+    setEditName(activeUser.displayName);
+    setEditBio(activeUser.bio || 'Curious learner exploring new frontiers of knowledge.');
+    setEditAvatar(activeUser.avatar);
+    setIsEditing(true);
+  };
+
+  const handleSaveProfile = async () => {
+    if (!editName.trim()) return;
+    setSaving(true);
+    try {
+      await updateProfileDetails(editName.trim(), editBio.trim(), editAvatar);
+      setIsEditing(false);
+    } catch (e) {
+      console.error('[Dashboard] Save failed:', e);
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -48,16 +122,97 @@ export default function Dashboard() {
         
         {/* Profile Card Header */}
         <View style={styles.header}>
-          <View>
-            <Text style={[styles.welcome, { color: colors.textMuted }]}>COGNITIVE TERMINAL</Text>
-            <Text style={[styles.name, { color: colors.text }]}>{activeUser.displayName.toUpperCase()}</Text>
+          <View style={styles.headerProfileRow}>
+            <Image source={{ uri: activeUser.avatar }} style={styles.avatarImage} />
+            <View>
+              <Text style={[styles.welcome, { color: colors.textMuted }]}>COGNITIVE TERMINAL</Text>
+              <Text style={[styles.name, { color: colors.text }]}>{activeUser.displayName.toUpperCase()}</Text>
+            </View>
           </View>
           
-          <GlassCard style={styles.streakBadge} intensity={25} borderColor="rgba(255, 0, 127, 0.2)">
-            <Flame size={16} color={colors.accent} fill={colors.accent} style={{ marginRight: 6 }} />
-            <Text style={[styles.streakText, { color: colors.accent }]}>{activeUser.streak} D STREAK</Text>
-          </GlassCard>
+          <View style={styles.headerActions}>
+            <TouchableOpacity onPress={handleOpenEdit} style={styles.settingsBtn}>
+              <Settings2 size={18} color={colors.textMuted} />
+            </TouchableOpacity>
+
+            <GlassCard style={styles.streakBadge} intensity={25} borderColor="rgba(255, 0, 127, 0.2)">
+              <Flame size={14} color={colors.accent} fill={colors.accent} style={{ marginRight: 4 }} />
+              <Text style={[styles.streakText, { color: colors.accent }]}>{activeUser.streak} D STREAK</Text>
+            </GlassCard>
+          </View>
         </View>
+
+        {/* Dynamic Glassmorphic Profile Settings Editor */}
+        {isEditing && (
+          <GlassCard style={styles.editCard} intensity={35} glow>
+            <Text style={[styles.editTitle, { color: colors.text }]}>EDIT COGNITIVE TERMINAL</Text>
+            
+            {/* Avatar Select Carousel */}
+            <View style={styles.editGroup}>
+              <Text style={[styles.editLabel, { color: colors.textMuted }]}>SELECT AVATAR IDENTITY</Text>
+              <View style={styles.avatarCarousel}>
+                {DEFAULT_AVATARS.map((av, idx) => {
+                  const isSelected = av === editAvatar;
+                  return (
+                    <TouchableOpacity key={idx} onPress={() => setEditAvatar(av)} style={styles.avatarSelBtn}>
+                      <Image source={{ uri: av }} style={[styles.avatarSelImg, isSelected && { borderColor: colors.primary, borderWidth: 2 }]} />
+                      {isSelected && (
+                        <View style={[styles.avatarCheck, { backgroundColor: colors.primary }]}>
+                          <Check size={10} color="#03001e" strokeWidth={3} />
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+
+            <View style={styles.editGroup}>
+              <Text style={[styles.editLabel, { color: colors.textMuted }]}>DISPLAY IDENTIFIER</Text>
+              <TextInput
+                value={editName}
+                onChangeText={setEditName}
+                placeholder="Aria"
+                placeholderTextColor={colors.textMuted}
+                style={[styles.editInput, { color: colors.text, borderColor: 'rgba(255,255,255,0.08)' }]}
+              />
+            </View>
+
+            <View style={styles.editGroup}>
+              <Text style={[styles.editLabel, { color: colors.textMuted }]}>COGNITIVE BIOGRAPHY</Text>
+              <TextInput
+                value={editBio}
+                onChangeText={setEditBio}
+                placeholder="Write a brief bio..."
+                placeholderTextColor={colors.textMuted}
+                multiline
+                numberOfLines={2}
+                style={[styles.editInput, styles.editInputBio, { color: colors.text, borderColor: 'rgba(255,255,255,0.08)' }]}
+              />
+            </View>
+
+            <View style={styles.editActionRow}>
+              <TouchableOpacity onPress={() => setIsEditing(false)} style={[styles.editBtnCancel, { borderColor: 'rgba(255,255,255,0.1)' }]}>
+                <Text style={[styles.editBtnText, { color: colors.textMuted }]}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity onPress={handleSaveProfile} disabled={saving} style={[styles.editBtnSave, { backgroundColor: colors.primary }]}>
+                {saving ? (
+                  <ActivityIndicator size="small" color="#03001e" />
+                ) : (
+                  <Text style={[styles.editBtnText, { color: '#03001e', fontWeight: '800' }]}>Save Settings</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </GlassCard>
+        )}
+
+        {/* User Bio View */}
+        {activeUser.bio && !isEditing && (
+          <GlassCard style={styles.bioCard} intensity={15}>
+            <Text style={[styles.bioText, { color: colors.textMuted }]}>"{activeUser.bio}"</Text>
+          </GlassCard>
+        )}
 
         {/* Global Progress Dial Card */}
         <GlassCard style={styles.progressDialCard} intensity={25} glow>
@@ -65,15 +220,15 @@ export default function Dashboard() {
             <View style={styles.dialLeft}>
               <Text style={[styles.dialLevelLabel, { color: colors.primary }]}>SYSTEM LEVEL {activeUser.level}</Text>
               <Text style={[styles.dialXpLabel, { color: colors.text }]}>
-                {activeUser.xp % 500} <Text style={{ color: colors.textMuted, fontSize: 13 }}>/ 500 XP</Text>
+                {xpStats.currentLevelXp} <Text style={{ color: colors.textMuted, fontSize: 13 }}>/ {xpStats.nextLevelXp} XP</Text>
               </Text>
               
               <View style={styles.xpTrack}>
-                <View style={[styles.xpBar, { width: `${((activeUser.xp % 500) / 500) * 100}%`, backgroundColor: colors.primary }]} />
+                <View style={[styles.xpBar, { width: `${xpStats.percent}%`, backgroundColor: colors.primary }]} />
               </View>
               
               <Text style={[styles.dialTip, { color: colors.textMuted }]}>
-                Next level unlock: <Text style={{ color: colors.primary }}>React Native Web Structures</Text>
+                Next level unlock: <Text style={{ color: colors.primary }}>Custom AI Tutor Synthesizer</Text>
               </Text>
             </View>
 
@@ -88,7 +243,7 @@ export default function Dashboard() {
         <View style={styles.analyticsGrid}>
           <GlassCard style={styles.gridBox} intensity={20}>
             <Clock size={20} color={colors.primary} style={styles.boxIcon} />
-            <Text style={[styles.boxVal, { color: colors.text }]}>12m</Text>
+            <Text style={[styles.boxVal, { color: colors.text }]}>{learningTimeMin}m</Text>
             <Text style={[styles.boxLabel, { color: colors.textMuted }]}>LEARNING TIME</Text>
           </GlassCard>
 
@@ -108,7 +263,7 @@ export default function Dashboard() {
 
           <GlassCard style={styles.heatmapCard} intensity={25}>
             <View style={styles.heatmapGrid}>
-              {HEATMAP_DAYS.map((week, wIdx) => (
+              {dynamicHeatmap.map((week, wIdx) => (
                 <View key={wIdx} style={styles.heatmapCol}>
                   {week.map((day, dIdx) => (
                     <View
@@ -142,24 +297,36 @@ export default function Dashboard() {
           </View>
 
           <View style={styles.badgeCol}>
-            {ACHIEVEMENTS.map(badge => {
-              const BadgeIcon = badge.icon;
+            {activeUser.badges && activeUser.badges.length > 0 ? (
+              activeUser.badges.map((badgeName, idx) => {
+                const spec = BADGE_DETAILS[badgeName] || {
+                  title: badgeName,
+                  desc: 'Earned through skill optimization',
+                  icon: Award,
+                  color: '#00f2fe'
+                };
+                const BadgeIcon = spec.icon;
 
-              return (
-                <GlassCard key={badge.id} style={styles.badgeCard} intensity={15}>
-                  <View style={styles.badgeRow}>
-                    <View style={[styles.badgeIconOuter, { backgroundColor: 'rgba(255,255,255,0.02)', borderColor: badge.color }]}>
-                      <BadgeIcon size={20} color={badge.color} />
+                return (
+                  <GlassCard key={idx} style={styles.badgeCard} intensity={15}>
+                    <View style={styles.badgeRow}>
+                      <View style={[styles.badgeIconOuter, { backgroundColor: 'rgba(255,255,255,0.02)', borderColor: spec.color }]}>
+                        <BadgeIcon size={20} color={spec.color} />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.badgeTitle, { color: colors.text }]}>{spec.title}</Text>
+                        <Text style={[styles.badgeDesc, { color: colors.textMuted }]}>{spec.desc}</Text>
+                      </View>
+                      <Star size={16} color={colors.warning} fill={colors.warning} />
                     </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={[styles.badgeTitle, { color: colors.text }]}>{badge.title}</Text>
-                      <Text style={[styles.badgeDesc, { color: colors.textMuted }]}>{badge.desc}</Text>
-                    </View>
-                    <Star size={16} color={colors.warning} fill={colors.warning} />
-                  </View>
-                </GlassCard>
-              );
-            })}
+                  </GlassCard>
+                );
+              })
+            ) : (
+              <GlassCard style={styles.badgeCard} intensity={10}>
+                <Text style={[styles.badgeDesc, { color: colors.textMuted, textAlign: 'center' }]}>No badges unlocked yet. Keep studying!</Text>
+              </GlassCard>
+            )}
           </View>
         </View>
       </ScrollView>
@@ -180,7 +347,31 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 24,
+    marginBottom: 16,
+  },
+  headerProfileRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  avatarImage: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.3)',
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  settingsBtn: {
+    padding: 8,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 1,
   },
   welcome: {
     fontSize: 10,
@@ -188,7 +379,7 @@ const styles = StyleSheet.create({
     letterSpacing: 1.5,
   },
   name: {
-    fontSize: 26,
+    fontSize: 22,
     fontWeight: '900',
     letterSpacing: 0.5,
     marginTop: 2,
@@ -197,14 +388,106 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 8,
-    paddingHorizontal: 14,
+    paddingHorizontal: 12,
     borderRadius: 16,
     backgroundColor: 'rgba(255,0,127,0.05)',
   },
   streakText: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '800',
     letterSpacing: 0.5,
+  },
+  bioCard: {
+    padding: 14,
+    borderRadius: 16,
+    marginBottom: 18,
+  },
+  bioText: {
+    fontSize: 12,
+    fontStyle: 'italic',
+    lineHeight: 18,
+  },
+  editCard: {
+    padding: 20,
+    borderRadius: 20,
+    marginBottom: 20,
+  },
+  editTitle: {
+    fontSize: 14,
+    fontWeight: '900',
+    letterSpacing: 1,
+    marginBottom: 16,
+  },
+  editGroup: {
+    marginBottom: 16,
+  },
+  editLabel: {
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 1,
+    marginBottom: 8,
+  },
+  avatarCarousel: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  avatarSelBtn: {
+    position: 'relative',
+  },
+  avatarSelImg: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 1.5,
+    borderColor: 'transparent',
+  },
+  avatarCheck: {
+    position: 'absolute',
+    bottom: -2,
+    right: -2,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  editInput: {
+    height: 46,
+    borderRadius: 12,
+    borderWidth: 1,
+    backgroundColor: 'rgba(255,255,255,0.02)',
+    paddingHorizontal: 16,
+    fontSize: 13,
+  },
+  editInputBio: {
+    height: 60,
+    paddingTop: 10,
+    textAlignVertical: 'top',
+  },
+  editActionRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 12,
+    marginTop: 8,
+  },
+  editBtnCancel: {
+    height: 40,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  editBtnSave: {
+    height: 40,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  editBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
   },
   progressDialCard: {
     padding: 20,
